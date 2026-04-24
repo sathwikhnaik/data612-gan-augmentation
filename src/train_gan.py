@@ -9,7 +9,7 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from .config import GANConfig, TrainConfig
-from .data import get_base_dataset
+from .data import get_base_dataset, maybe_stratified_train_cap
 from .models import ConditionalDiscriminator, ConditionalGenerator
 from .utils import ensure_dir, get_device, set_seed, timestamp
 
@@ -22,6 +22,12 @@ def parse_args():
     parser.add_argument("--latent-dim", type=int, default=GANConfig.latent_dim)
     parser.add_argument("--seed", type=int, default=TrainConfig.seed)
     parser.add_argument("--num-workers", type=int, default=TrainConfig.num_workers)
+    parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=0,
+        help="Stratified cap on GAN training data (0 = full training set).",
+    )
     return parser.parse_args()
 
 
@@ -33,6 +39,7 @@ def train_gan_core(
     seed: int,
     num_workers: int,
     model_dir: str | None = None,
+    max_gan_train_samples: int | None = None,
 ) -> str:
     """
     Train conditional GAN; return absolute-style path to saved generator.pt.
@@ -42,6 +49,7 @@ def train_gan_core(
     device = get_device()
 
     data = get_base_dataset(dataset, train=True)
+    data = maybe_stratified_train_cap(data, max_gan_train_samples, seed)
     loader = DataLoader(
         data,
         batch_size=batch_size,
@@ -121,6 +129,7 @@ def train_gan_core(
 
 def train():
     args = parse_args()
+    cap = args.max_train_samples if args.max_train_samples > 0 else None
     train_gan_core(
         dataset=args.dataset,
         epochs=args.epochs,
@@ -129,6 +138,7 @@ def train():
         seed=args.seed,
         num_workers=args.num_workers,
         model_dir=None,
+        max_gan_train_samples=cap,
     )
 
 

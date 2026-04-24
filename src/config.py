@@ -1,5 +1,26 @@
 from dataclasses import dataclass
 
+# Human-readable names for per-class reporting (10 classes each).
+MNIST_CLASS_NAMES = [str(i) for i in range(10)]
+FASHION_MNIST_CLASS_NAMES = [
+    "T-shirt/top",
+    "Trouser",
+    "Pullover",
+    "Dress",
+    "Coat",
+    "Sandal",
+    "Shirt",
+    "Sneaker",
+    "Bag",
+    "Ankle boot",
+]
+
+
+def class_names_for_dataset(dataset_name: str) -> list:
+    if dataset_name == "fashion_mnist":
+        return FASHION_MNIST_CLASS_NAMES
+    return MNIST_CLASS_NAMES
+
 
 @dataclass
 class DataConfig:

@@ -1,3 +1,9 @@
+"""
+Generative models: conditional GAN (cGAN) [Mirza & Osindero, 2014].
+
+Both networks take a class label y: the generator maps (z, y) -> x;
+the discriminator scores (x, y). This matches the project proposal.
+"""
 import torch
 import torch.nn as nn
 
@@ -70,3 +76,8 @@ class SimpleCNNClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.features(x))
+
+
+# Explicit aliases for papers / proposals that refer to "cGAN".
+cGANGenerator = ConditionalGenerator
+cGANDiscriminator = ConditionalDiscriminator

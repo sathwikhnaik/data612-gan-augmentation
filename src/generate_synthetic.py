@@ -58,7 +58,9 @@ def generate_synthetic_core(
                 labels = torch.tensor([cls], device=device)
                 img = generator(noise, labels)
                 save_path = os.path.join(output_root, str(cls), f"{cls}_{i:06d}.png")
-                save_image((img + 1) / 2, save_path)
+                x = (img.clamp(-1, 1) + 1) / 2
+                x3 = x.repeat(1, 3, 1, 1)
+                save_image(x3, save_path)
 
     print(f"Synthetic images written to: {output_root}")
     return output_root

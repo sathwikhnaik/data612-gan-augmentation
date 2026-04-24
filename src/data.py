@@ -1,9 +1,9 @@
 import os
-from typing import Tuple
+from typing import List, Optional, Tuple
 
-import torch
+import numpy as np
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 
 
@@ -23,6 +23,42 @@ def get_base_dataset(dataset_name: str, root: str = "data", train: bool = True):
     if dataset_name == "fashion_mnist":
         return datasets.FashionMNIST(root=root, train=train, transform=transform, download=True)
     raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+
+def num_classes(dataset_name: str) -> int:
+    _ = dataset_name  # both benchmarks use 10 classes
+    return 10
+
+
+def stratified_subset_indices(dataset, max_samples: int, seed: int) -> List[int]:
+    """
+    Balanced scarcity: as equal as possible per class from dataset.targets.
+    """
+    if max_samples <= 0:
+        return []
+    max_samples = min(max_samples, len(dataset))
+    rng = np.random.default_rng(seed)
+    targets = np.array(dataset.targets)
+    n_classes = int(targets.max()) + 1
+    per = max_samples // n_classes
+    rem = max_samples % n_classes
+    indices: List[int] = []
+    for c in range(n_classes):
+        pool = np.where(targets == c)[0]
+        take = per + (1 if c < rem else 0)
+        take = min(take, len(pool))
+        if take > 0:
+            chosen = rng.choice(pool, size=take, replace=False)
+            indices.extend(chosen.tolist())
+    return indices
+
+
+def maybe_stratified_train_cap(dataset, max_samples: Optional[int], seed: int):
+    """Return original dataset or a Subset capped to max_samples (stratified by class)."""
+    if max_samples is None or max_samples <= 0 or max_samples >= len(dataset):
+        return dataset
+    idx = stratified_subset_indices(dataset, max_samples, seed)
+    return Subset(dataset, idx)
 
 
 class SyntheticImageFolderDataset(Dataset):
@@ -76,8 +112,14 @@ def get_dataloaders(
     num_workers: int = 2,
     synthetic_root: str = "",
     scenario: str = "real_only",
+    max_real_train_samples: Optional[int] = None,
+    train_subset_seed: int = 42,
 ) -> Tuple[DataLoader, DataLoader]:
     real_train = get_base_dataset(dataset_name=dataset_name, train=True)
+    if scenario in ("real_only", "real_plus_synthetic"):
+        real_train = maybe_stratified_train_cap(
+            real_train, max_real_train_samples, train_subset_seed
+        )
     real_test = get_base_dataset(dataset_name=dataset_name, train=False)
     synthetic_train = None
 
