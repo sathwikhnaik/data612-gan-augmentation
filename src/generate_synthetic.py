@@ -1,12 +1,43 @@
 import argparse
+import json
 import os
 
 import torch
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from .models import ConditionalGenerator
+from .models import ConditionalGenerator, build_generator
 from .utils import ensure_dir, get_device, set_seed, timestamp
+
+
+def _load_generator(generator_path: str, latent_dim: int, device) -> tuple:
+    """
+    Load the generator using its saved generator_config.json if available,
+    otherwise fall back to the default ConditionalGenerator.
+    Returns (generator, latent_dim).
+    """
+    model_dir = os.path.dirname(generator_path)
+    config_path = os.path.join(model_dir, "generator_config.json")
+
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        G = build_generator(
+            gen_type=cfg.get("gen_type", "mlp"),
+            conditioning=cfg.get("conditioning", "embedding"),
+            latent_dim=cfg.get("latent_dim", latent_dim),
+            num_classes=cfg.get("num_classes", 10),
+            embedding_dim=cfg.get("embedding_dim", 50),
+            hidden_dims=cfg.get("hidden_dims"),
+        )
+        latent_dim = cfg.get("latent_dim", latent_dim)
+    else:
+        # backward-compat: assume default MLP cGAN
+        G = ConditionalGenerator(latent_dim=latent_dim)
+
+    G.load_state_dict(torch.load(generator_path, map_location=device, weights_only=True))
+    G.to(device).eval()
+    return G, latent_dim
 
 
 def parse_args():
@@ -26,10 +57,12 @@ def generate_synthetic_core(
     latent_dim: int,
     seed: int,
     output_root: str | None = None,
+    model_dir: str | None = None,
 ) -> str:
     """
-    Write class-balanced PNGs under output_root/<0-9>/. If output_root is None,
-    uses outputs/synthetic/<dataset>_synthetic_<timestamp>/.
+    Write class-balanced PNGs under output_root/<0-9>/.
+    If model_dir is given, generator_config.json is read from there to load
+    the correct architecture. Otherwise generator_path's parent dir is checked.
     """
     set_seed(seed)
     device = get_device()
@@ -37,9 +70,15 @@ def generate_synthetic_core(
     if not generator_path:
         raise ValueError("generator_path is required.")
 
-    generator = ConditionalGenerator(latent_dim=latent_dim).to(device)
-    generator.load_state_dict(torch.load(generator_path, map_location=device))
-    generator.eval()
+    # Allow caller to override which directory holds the config
+    if model_dir:
+        config_path = os.path.join(model_dir, "generator_config.json")
+        if os.path.exists(config_path):
+            # Re-point generator_path to the one in model_dir (should be the same)
+            if not os.path.exists(generator_path):
+                generator_path = os.path.join(model_dir, "generator.pt")
+
+    G, latent_dim = _load_generator(generator_path, latent_dim, device)
 
     if output_root is None:
         run_id = f"{dataset}_synthetic_{timestamp()}"
@@ -56,11 +95,10 @@ def generate_synthetic_core(
             for i in tqdm(range(class_count), desc=f"Class {cls}"):
                 noise = torch.randn(1, latent_dim, device=device)
                 labels = torch.tensor([cls], device=device)
-                img = generator(noise, labels)
+                img = G(noise, labels)
                 save_path = os.path.join(output_root, str(cls), f"{cls}_{i:06d}.png")
                 x = (img.clamp(-1, 1) + 1) / 2
-                x3 = x.repeat(1, 3, 1, 1)
-                save_image(x3, save_path)
+                save_image(x.repeat(1, 3, 1, 1), save_path)
 
     print(f"Synthetic images written to: {output_root}")
     return output_root

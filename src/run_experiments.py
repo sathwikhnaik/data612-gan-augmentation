@@ -6,14 +6,17 @@ import matplotlib.pyplot as plt
 
 from .fid_eval import compute_fid_for_experiment
 from .generate_synthetic import generate_synthetic_core
+from .interpolate import generate_interpolation_grid
+from .per_class_quality import evaluate_synthetic_quality
 from .train_classifier import train_classifier_core
 from .train_gan import train_gan_core
 from .utils import ensure_dir, save_json, timestamp
+from .volume_sweep import run_volume_sweep
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Run full pipeline: cGAN (optional), synthetic data, three classifier scenarios, comparison table and plot."
+        description="Run full pipeline: cGAN (optional), synthetic data, four classifier scenarios, comparison table and plot."
     )
     p.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "fashion_mnist"])
     p.add_argument("--seed", type=int, default=42)
@@ -57,9 +60,50 @@ def parse_args():
         "--fid-num-images",
         type=int,
         default=10000,
-        help="Number of real train images to export for FID (capped by dataset size; matched count helps stability).",
+        help="Number of real train images to export for FID.",
     )
     p.add_argument("--fid-batch-size", type=int, default=64)
+    p.add_argument(
+        "--interpolation-steps",
+        type=int,
+        default=10,
+        help="Number of steps for latent space interpolation grid.",
+    )
+    p.add_argument(
+        "--sweep-volume",
+        action="store_true",
+        help="Run a volume sweep: train real_plus_synthetic classifier across multiple synthetic counts.",
+    )
+    p.add_argument(
+        "--volume-sweep-values",
+        type=int,
+        nargs="+",
+        default=[500, 1000, 3000, 6000, 12000],
+        help="Synthetic counts to sweep over when --sweep-volume is set.",
+    )
+    # ── GAN Architecture ──────────────────────────────────────────────────
+    p.add_argument("--gen-type", type=str, default="mlp", choices=["mlp", "dcgan"],
+                   help="Generator architecture: MLP (default) or DCGAN (convolutional).")
+    p.add_argument("--conditioning", type=str, default="embedding",
+                   choices=["embedding", "onehot", "projection"],
+                   help="How class labels are injected into the GAN.")
+    p.add_argument("--embedding-dim", type=int, default=50)
+    p.add_argument("--hidden-dims", type=int, nargs="+", default=None,
+                   help="MLP generator hidden layer sizes, e.g. 256 512 1024.")
+    p.add_argument("--disc-dropout", type=float, default=0.3)
+    # ── GAN Training Strategy ─────────────────────────────────────────────
+    p.add_argument("--loss-type", type=str, default="bce",
+                   choices=["bce", "wgan_gp", "hinge"])
+    p.add_argument("--label-smoothing", action="store_true", default=False)
+    p.add_argument("--generator-lr", type=float, default=2e-4)
+    p.add_argument("--discriminator-lr", type=float, default=2e-4)
+    p.add_argument("--n-critic", type=int, default=1,
+                   help="D updates per G update (auto-set to 5 for wgan_gp).")
+    p.add_argument("--gp-lambda", type=float, default=10.0)
+    # ── Extra classifier scenarios ────────────────────────────────────────
+    p.add_argument("--extra-scenarios", type=str, nargs="*", default=[],
+                   choices=["real_plus_synthetic_weighted", "synthetic_pretrain", "progressive"],
+                   help="Additional classifier scenarios beyond the core four.")
     return p.parse_args()
 
 
@@ -70,7 +114,7 @@ def plot_comparison(rows, output_path: str, title: str) -> None:
     x = list(range(len(scenarios)))
     n_met = len(metric_keys)
     width = 0.8 / max(n_met, 1)
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(10, 5))
     for i, key in enumerate(metric_keys):
         vals = [r["metrics"][key] for r in rows]
         offset = (i - (n_met - 1) / 2) * width
@@ -87,10 +131,7 @@ def plot_comparison(rows, output_path: str, title: str) -> None:
 
 
 def _aggregate_per_class(rows):
-    out = {}
-    for r in rows:
-        out[r["scenario"]] = r.get("per_class", [])
-    return out
+    return {r["scenario"]: r.get("per_class", []) for r in rows}
 
 
 def write_csv(rows, path: str) -> None:
@@ -137,10 +178,14 @@ def main():
 
     max_gan = args.max_gan_train_samples if args.max_gan_train_samples > 0 else None
 
+    # ── 1. Train or load cGAN ──────────────────────────────────────────────
     if args.skip_gan:
         generator_path = args.generator_path
     else:
         print(f"[experiment] Training cGAN -> {gan_dir}")
+        n_critic = args.n_critic
+        if args.loss_type == "wgan_gp" and n_critic == 1:
+            n_critic = 5
         generator_path = train_gan_core(
             dataset=args.dataset,
             epochs=args.gan_epochs,
@@ -150,8 +195,31 @@ def main():
             num_workers=args.num_workers,
             model_dir=gan_dir,
             max_gan_train_samples=max_gan,
+            gen_type=args.gen_type,
+            conditioning=args.conditioning,
+            embedding_dim=args.embedding_dim,
+            hidden_dims=args.hidden_dims,
+            disc_dropout=args.disc_dropout,
+            loss_type=args.loss_type,
+            label_smoothing=args.label_smoothing,
+            generator_lr=args.generator_lr,
+            discriminator_lr=args.discriminator_lr,
+            n_critic=n_critic,
+            gp_lambda=args.gp_lambda,
         )
 
+    # ── 2. Latent space interpolation ─────────────────────────────────────
+    interp_path = os.path.join(gan_dir, "interpolation_grid.png")
+    print(f"[experiment] Generating interpolation grid -> {interp_path}")
+    generate_interpolation_grid(
+        generator_path=generator_path,
+        output_path=interp_path,
+        latent_dim=args.latent_dim,
+        steps=args.interpolation_steps,
+        seed=args.seed,
+    )
+
+    # ── 3. Generate synthetic images ───────────────────────────────────────
     if args.synthetic_root:
         synthetic_root = args.synthetic_root
         print(f"[experiment] Using synthetic data at: {synthetic_root}")
@@ -165,16 +233,19 @@ def main():
             latent_dim=args.latent_dim,
             seed=args.seed,
             output_root=syn_out,
+            model_dir=gan_dir,
         )
 
     max_real = args.max_real_train_samples if args.max_real_train_samples > 0 else None
     train_frac = args.train_fraction if args.train_fraction > 0 else None
 
-    scenarios = ["real_only", "real_plus_synthetic", "synthetic_only"]
+    # ── 4. Train classifier scenarios ─────────────────────────────────────
+    scenarios = ["real_only", "augmented_real", "real_plus_synthetic", "synthetic_only"]
+    scenarios += [s for s in (args.extra_scenarios or []) if s not in scenarios]
     rows = []
 
     for scenario in scenarios:
-        syn_arg = "" if scenario == "real_only" else synthetic_root
+        syn_arg = "" if scenario in ("real_only", "augmented_real") else synthetic_root
         clf_dir = os.path.join(exp_root, "classifiers", scenario)
         print(f"[experiment] Classifier: {scenario}")
         out = train_classifier_core(
@@ -198,15 +269,23 @@ def main():
                 "metrics": out["metrics"],
                 "per_class": out.get("per_class", []),
                 "run_dir": out["run_dir"],
+                "classifier_path": out["classifier_path"],
             }
         )
 
-    csv_path = os.path.join(exp_root, "comparison.csv")
-    json_path = os.path.join(exp_root, "comparison.json")
-    plot_path = os.path.join(exp_root, "comparison_metrics.png")
-    per_class_path = os.path.join(exp_root, "per_class_by_scenario.json")
+    # ── 5. Per-class GAN quality (uses real_only classifier) ───────────────
+    real_only_row = next((r for r in rows if r["scenario"] == "real_only"), None)
+    synthetic_quality = None
+    if real_only_row:
+        print("[experiment] Evaluating per-class GAN image quality...")
+        synthetic_quality = evaluate_synthetic_quality(
+            classifier_path=real_only_row["classifier_path"],
+            synthetic_root=synthetic_root,
+            dataset=args.dataset,
+            output_dir=os.path.join(exp_root, "per_class_quality"),
+        )
 
-    write_csv(rows, csv_path)
+    # ── 6. Optional: FID ──────────────────────────────────────────────────
     fid_info = None
     if args.compute_fid:
         fid_dir = os.path.join(exp_root, "fid_work")
@@ -221,32 +300,64 @@ def main():
         )
         print(f"[experiment] FID: {fid_info['fid']:.4f}")
 
+    # ── 7. Optional: volume sweep ─────────────────────────────────────────
+    volume_sweep_results = None
+    if args.sweep_volume:
+        print("[experiment] Running synthetic data volume sweep...")
+        volume_sweep_results = run_volume_sweep(
+            generator_path=generator_path,
+            dataset=args.dataset,
+            num_synthetic_values=args.volume_sweep_values,
+            classifier_epochs=args.classifier_epochs,
+            seed=args.seed,
+            output_dir=os.path.join(exp_root, "volume_sweep"),
+            latent_dim=args.latent_dim,
+            max_real_train_samples=max_real,
+            train_fraction=train_frac,
+            quiet=args.quiet_classifiers,
+        )
+
+    # ── 8. Write comparison outputs ───────────────────────────────────────
+    csv_path = os.path.join(exp_root, "comparison.csv")
+    json_path = os.path.join(exp_root, "comparison.json")
+    plot_path = os.path.join(exp_root, "comparison_metrics.png")
+    per_class_path = os.path.join(exp_root, "per_class_by_scenario.json")
+
+    write_csv(rows, csv_path)
     summary = {
         "dataset": args.dataset,
         "generator_path": generator_path,
         "synthetic_root": synthetic_root,
+        "interpolation_grid": interp_path,
         "max_real_train_samples": max_real,
         "train_fraction": train_frac,
         "max_gan_train_samples": max_gan,
         "fid": fid_info,
+        "synthetic_quality": synthetic_quality,
+        "volume_sweep": volume_sweep_results,
         "runs": rows,
         "per_class_by_scenario": _aggregate_per_class(rows),
     }
     save_json(summary, json_path)
     save_json(summary["per_class_by_scenario"], per_class_path)
-    plot_comparison(
-        rows,
-        plot_path,
-        title=f"{args.dataset} classifier comparison"
+
+    title = (
+        f"{args.dataset} classifier comparison"
         + (f" (real train cap={max_real})" if max_real else "")
-        + (f" (train fraction={train_frac})" if train_frac and not max_real else ""),
+        + (f" (train fraction={train_frac})" if train_frac and not max_real else "")
     )
+    plot_comparison(rows, plot_path, title=title)
 
     print(f"[experiment] Done. Artifacts under:\n  {exp_root}")
     print(f"  - {csv_path}")
     print(f"  - {json_path}")
     print(f"  - {per_class_path}")
     print(f"  - {plot_path}")
+    print(f"  - {interp_path}")
+    if synthetic_quality:
+        print(f"  - {os.path.join(exp_root, 'per_class_quality', 'synthetic_recognizability.png')}")
+    if args.sweep_volume:
+        print(f"  - {os.path.join(exp_root, 'volume_sweep', 'volume_sweep.png')}")
 
 
 if __name__ == "__main__":
