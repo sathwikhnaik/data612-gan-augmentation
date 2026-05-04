@@ -7,10 +7,53 @@ __pycache__/
 venv/
 env/
 
-# Outputs and data artifacts
-outputs/
+# Raw downloaded datasets
 data/
 
 # IDE
 .vscode/
 .idea/
+
+# Exclude most of outputs, but keep research_report results
+outputs/
+!outputs/
+!outputs/research_report/
+!outputs/research_report/index.html
+!outputs/research_report/pipeline.log
+!outputs/research_report/pipeline_state.json
+!outputs/research_report/1_main_comparison/
+!outputs/research_report/1_main_comparison/mnist/
+!outputs/research_report/1_main_comparison/mnist/comparison.json
+!outputs/research_report/1_main_comparison/mnist/comparison.csv
+!outputs/research_report/1_main_comparison/mnist/scenario_comparison.png
+!outputs/research_report/1_main_comparison/fashion_mnist/
+!outputs/research_report/1_main_comparison/fashion_mnist/comparison.json
+!outputs/research_report/1_main_comparison/fashion_mnist/comparison.csv
+!outputs/research_report/1_main_comparison/fashion_mnist/scenario_comparison.png
+!outputs/research_report/2_arch_ablation/
+!outputs/research_report/2_arch_ablation/arch_sweep_results.json
+!outputs/research_report/2_arch_ablation/arch_ablation_conditioning.png
+!outputs/research_report/2_arch_ablation/arch_ablation_disc_dropout.png
+!outputs/research_report/2_arch_ablation/arch_ablation_embedding_dim.png
+!outputs/research_report/2_arch_ablation/arch_ablation_gen_type.png
+!outputs/research_report/2_arch_ablation/arch_ablation_hidden_dims.png
+!outputs/research_report/2_arch_ablation/arch_ablation_latent_dim.png
+!outputs/research_report/3_training_ablation/
+!outputs/research_report/3_training_ablation/training_sweep_results.json
+!outputs/research_report/3_training_ablation/training_ablation_gan_epochs.png
+!outputs/research_report/3_training_ablation/training_ablation_label_smoothing.png
+!outputs/research_report/3_training_ablation/training_ablation_loss_type.png
+!outputs/research_report/3_training_ablation/training_ablation_lr_ratio.png
+!outputs/research_report/4_scarcity/
+!outputs/research_report/4_scarcity/scarcity_results.json
+!outputs/research_report/4_scarcity/scarcity_accuracy.png
+!outputs/research_report/4_scarcity/scarcity_f1.png
+!outputs/research_report/4_scarcity/gap_vs_baseline.png
+!outputs/research_report/4_scarcity/synthetic_crossover.png
+!outputs/research_report/4_scarcity/f1_gain_heatmap.png
+!outputs/research_report/5_volume_sweep/
+!outputs/research_report/5_volume_sweep/volume_sweep.json
+!outputs/research_report/5_volume_sweep/volume_sweep.png
+!outputs/research_report/6_cross_dataset/
+!outputs/research_report/6_cross_dataset/scenario_comparison.png
+!outputs/research_report/6_cross_dataset/delta_vs_baseline.png
