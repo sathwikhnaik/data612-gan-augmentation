@@ -64,6 +64,8 @@ def compute_fid(
         kid=False,
         verbose=False,
         batch_size=batch_size,
+        # Synthetic tree is output_root/<class_id>/*.png; non-recursive glob finds nothing.
+        samples_find_deep=True,
     )
     return float(metrics["frechet_inception_distance"])
 
