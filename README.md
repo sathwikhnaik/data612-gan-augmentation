@@ -304,6 +304,152 @@ python -m src.train_classifier --dataset mnist --scenario progressive --syntheti
 
 ---
 
+## VAE-GAN Hybrid (`VAE-GAN.py`)
+
+A self-contained single-file pipeline that implements a **Conditional VAE-GAN** with a 7-goal experimental study. Everything - models, training, evaluation, and reporting - lives in `VAE-GAN.py`.
+
+### Goals overview
+
+| Goal | Description |
+|------|-------------|
+| 1 (implicit) | Train a Conditional VAE-GAN (Encoder + Generator + Discriminator) |
+| 2 | Three-way classifier comparison: real-only \| real+synthetic \| synthetic-only |
+| 3 | Architecture variants (latent dim, encoder depth, MLP vs CNN generator, discriminator dropout) |
+| 4 | Training strategy ablation (loss weights, learning rate, batch size) |
+| 5 | Data scarcity study (500 / 2k / 5k / full real images) |
+| 6 | Label injection method comparison (learned embedding \| one-hot \| generator-only) |
+| 7 | Extended augmentation scenarios (mix ratios, weighted sampling, progressive augmentation, pretrain->finetune) |
+
+Goal 1 is always run implicitly as part of whichever goals you select.
+
+### Quick start
+
+```bash
+# 2-minute sanity check (2 GAN epochs, 1 classifier epoch, 200 synthetic images)
+python VAE-GAN.py --dataset mnist --quick
+
+# Base 3-way comparison only (Goal 2)
+python VAE-GAN.py --dataset mnist --goals 2
+
+# Run all 7 goals
+python VAE-GAN.py --dataset mnist --goals all
+
+# Specific goals with custom epochs
+python VAE-GAN.py --dataset mnist --goals 2,3,7 --gan-epochs 30 --clf-epochs 10
+
+# Fashion-MNIST (harder dataset)
+python VAE-GAN.py --dataset fashion_mnist --goals all --gan-epochs 40 --clf-epochs 15
+```
+
+### Per-goal commands
+
+**Goal 2 - Three-Way Comparison**
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 2 --gan-epochs 30 --num-synthetic 12000 --clf-epochs 10
+```
+
+*Quick sanity check:*
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 2 --quick
+```
+
+**Goal 3 - Architecture Variants** (7 configs by default; use `--subset N` to limit)
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 3 --gan-epochs 30 --num-synthetic 5000
+# Run only first 2 configs:
+python VAE-GAN.py --dataset mnist --goals 3 --subset 2 --quick
+```
+
+**Goal 4 - Training Strategies** (9 configs by default)
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 4 --gan-epochs 30
+# Quick subset:
+python VAE-GAN.py --dataset mnist --goals 4 --subset 3 --quick
+```
+
+**Goal 5 - Data Scarcity**
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 5 --gan-epochs 30 --clf-epochs 10
+# With explicit real-data cap:
+python VAE-GAN.py --dataset mnist --goals 2 --max-real-samples 2000 --gan-epochs 30
+```
+
+*Quick sanity check:*
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 5 --subset 2 --quick
+```
+
+**Goal 6 - Label Injection Methods**
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 6 --gan-epochs 30 --num-synthetic 5000
+```
+
+**Goal 7 - Extended Augmentation Scenarios**
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 7 --gan-epochs 30 --clf-epochs 10
+```
+
+**FID evaluation** (requires `pip install torch-fidelity`)
+
+```bash
+python VAE-GAN.py --dataset mnist --goals 2 --compute-fid --fid-num-images 5000
+# Quick FID check:
+python VAE-GAN.py --dataset mnist --goals 2 --compute-fid --fid-num-images 512 --fid-batch-size 32 --quick
+```
+
+### Key arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--goals` | `2` | Comma-separated goal IDs (2-7) or `all` |
+| `--dataset` | `mnist` | `mnist` or `fashion_mnist` |
+| `--quick` | off | Override: 2 GAN epochs, 1 classifier epoch, 200 synthetic images, subset=2 |
+| `--subset` | 0 (all) | Run only the first N configs per goal (Goals 3-6) |
+| `--gan-epochs` | 30 | Training epochs for the VAE-GAN |
+| `--num-synthetic` | 12000 | Synthetic images to generate per run |
+| `--clf-epochs` | 10 | Training epochs for each CNN classifier |
+| `--clf-lr` | 1e-3 | Classifier learning rate |
+| `--max-real-samples` | 0 (full) | Cap real training images for Goals 2 & 7 |
+| `--compute-fid` | off | Compute FID score (Goal 2 only) |
+| `--fid-num-images` | 5000 | Images used for FID calculation |
+| `--verbose-clf` | off | Print per-epoch classifier loss |
+| `--seed` | 42 | Global random seed |
+| `--output-dir` | auto | Root output directory (auto-named if empty) |
+
+### Output structure
+
+Each run writes to `outputs/vaegan_<dataset>_<timestamp>/`:
+
+```
+outputs/vaegan_mnist_<timestamp>/
+  goal2_three_cases/
+    gan/                  ← generator.pt, encoder.pt, discriminator.pt, preview/
+    synthetic/            ← class subfolders of generated PNGs
+    visuals/              ← sample_grid.png, reconstruction_grid.png
+    clf_real_only/        ← metrics.json, confusion_matrix.png, model.pt
+    clf_real_plus_syn/
+    clf_synthetic_only/
+    three_cases.csv
+    three_cases.png
+    results.json
+    fid.json              ← (only if --compute-fid)
+  goal3_architecture/     ← per-variant subdirs + architecture_variants.csv/png
+  goal4_training_strategy/
+  goal5_data_scarcity/
+  goal6_label_injection/
+  goal7_augmentation_scenarios/
+```
+
+---
+
 ## Key Results
 
 | Scenario | MNIST Accuracy | Fashion-MNIST Accuracy |
